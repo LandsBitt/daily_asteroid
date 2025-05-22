@@ -6,9 +6,13 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from deep_translator import GoogleTranslator
 from dotenv import load_dotenv
+from supabase import create_client, Client
 import os
-import sqlite3
 import logging
+
+
+
+
 
 # Configura logging apenas para erros
 logging.basicConfig(
@@ -26,49 +30,47 @@ logging.getLogger("apscheduler").setLevel(logging.WARNING)
 load_dotenv()
 API_KEY = os.getenv("NASA_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Verifica se as variáveis de ambiente estão carregadas
 if not API_KEY or not TELEGRAM_TOKEN:
     logger.error("NASA_API_KEY ou TELEGRAM_TOKEN não encontrados no .env")
     exit()
 
-# Configura o banco de dados SQLite
-def init_db():
-    conn = sqlite3.connect("bot.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS subscribers (
-            chat_id INTEGER PRIMARY KEY
-        )
-    """)
-    conn.commit()
-    conn.close()
+if not SUPABASE_URL or not SUPABASE_KEY:
+    logger.error("SUPABASE_URL ou SUPABASE_KEY não encontrados no .env")
+    exit()
+    
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
 
 # Adiciona um chat_id ao banco
+
 def add_subscriber(chat_id):
-    conn = sqlite3.connect("bot.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO subscribers (chat_id) VALUES (?)", (chat_id,))
-    conn.commit()
-    conn.close()
+    try:
+        supabase.table("subscribers").insert({"chat_id": chat_id}).execute()
+    except Exception as e:
+        logger.error(f"Erro ao adicionar inscrito: {e}")
+
 
 # Remove um chat_id do banco
 def remove_subscriber(chat_id):
-    conn = sqlite3.connect("bot.db")
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM subscribers WHERE chat_id = ?", (chat_id,))
-    conn.commit()
-    conn.close()
+    try:
+        supabase.table("subscribers").delete().eq("chat_id", chat_id).execute()
+    except Exception as e:
+        logger.error(f"Erro ao remover inscrito: {e}")
 
 # Lista todos os chat_ids inscritos
 def get_subscribers():
-    conn = sqlite3.connect("bot.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT chat_id FROM subscribers")
-    chat_ids = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return chat_ids
-
+    try:
+        response = supabase.table("subscribers").select("chat_id").execute()
+        return [row["chat_id"] for row in response.data]
+    except Exception as e:
+        logger.error(f"Erro ao buscar inscritos: {e}")
+        return []
+    
 # Função para traduzir texto
 def traduzir(texto):
     try:
@@ -195,8 +197,6 @@ async def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
 
 # Função principal
 def main():
-    # Inicializa o banco de dados
-    init_db()
     
     # Inicializa o bot
     app = Application.builder().token(TELEGRAM_TOKEN).build()
